@@ -1,0 +1,158 @@
+---
+title: "R Notebook"
+output: 
+---
+
+```{r}
+library(tidyverse)
+library(data.table)
+theme_set(theme_classic())
+```
+
+DS_AG	Delta score (acceptor gain)
+DS_AL	Delta score (acceptor loss)
+DS_DG	Delta score (donor gain)
+DS_DL	Delta score (donor loss)
+DP_AG	Delta position (acceptor gain)
+DP_AL	Delta position (acceptor loss)
+DP_DG	Delta position (donor gain)
+DP_DL	Delta position (donor loss)
+
+```{r}
+
+SVPE_filt = fread('data/filtered_pseudos.bed', sep = '\t', col.names = c('chrom', 'start', 'stop', 'border_match_intron', 'strand'))
+SVPE_filt = SVPE_filt[-which(duplicated(SVPE_filt[, .(chrom, start, stop, strand)]))]
+setkey(SVPE_filt, chrom, start, stop)
+
+variant_category_labels = SVPE_filt[, list(POS = seq(start, stop, 1)), by = .(chrom, strand, border_match_intron)]
+variant_category_labels = SVPE_filt[variant_category_labels, on = .(chrom, strand, border_match_intron)]
+
+variant_category_labels[strand == '+' & POS >= start & POS < start + 8, varpos_category := 'PPT']
+variant_category_labels[strand == '+' & POS >= start + 8 & POS < start + 9, varpos_category := 'acceptor_ExSS']
+variant_category_labels[strand == '+' & POS >= start + 9 & POS < start + 11, varpos_category := 'acceptor_ES']
+variant_category_labels[strand == '+' & POS >= start + 11 & POS < stop - 14, varpos_category := 'exonic']
+variant_category_labels[strand == '+' & POS >= stop - 14 & POS < stop - 10, varpos_category := 'donor_ExSS']
+variant_category_labels[strand == '+' & POS >= stop - 10 & POS < stop - 8, varpos_category := 'donor_ES']
+variant_category_labels[strand == '+' & POS >= stop - 8 & POS < stop - 2, varpos_category := 'donor_ExSS']
+variant_category_labels[strand == '+' & POS >= stop - 2 & POS <= stop, varpos_category := 'donor_intronic']
+
+variant_category_labels[strand == '-' & POS >= start & POS < start + 3, varpos_category := 'donor_intronic']
+variant_category_labels[strand == '-' & POS >= start + 3 & POS < start + 9, varpos_category := 'donor_ExSS']
+variant_category_labels[strand == '-' & POS >= start + 9 & POS < start + 11, varpos_category := 'donor_ES']
+variant_category_labels[strand == '-' & POS >= start + 11 & POS < start + 15, varpos_category := 'donor_ExSS']
+variant_category_labels[strand == '-' & POS >= start + 11 & POS < start + 15, varpos_category := 'donor_ExSS']
+variant_category_labels[strand == '-' & POS >= start + 15 & POS < stop - 10, varpos_category := 'exonic']
+variant_category_labels[strand == '-' & POS >= stop - 10 & POS < stop - 8, varpos_category := 'acceptor_ES']
+variant_category_labels[strand == '-' & POS >= stop - 8 & POS < stop - 7, varpos_category := 'acceptor_ExSS']
+variant_category_labels[strand == '-' & POS >= stop - 7 & POS <= stop, varpos_category := 'PPT']
+
+variant_category_labels[varpos_category == 'donor_ExSS' & strand == '+', donor_pos := POS - (stop - 10)]
+variant_category_labels[varpos_category == 'donor_ExSS' & strand == '-', donor_pos := (start + 10) - POS]
+variant_category_labels[varpos_category == 'donor_ExSS' & donor_pos > 0, donor_pos := donor_pos + 1]
+```
+
+```{r}
+pathy = 'data/sai_output/'
+all.files <- list.files(path = pathy)
+
+l <- lapply(paste0(pathy, all.files), fread, sep="\t")
+```
+
+
+
+```{r}
+pseudo_deltas <- rbindlist(l )
+setnames(pseudo_deltas, c('#CHROM'), c('chrom'))
+pseudo_deltas = pseudo_deltas[, list(INFO = unlist(strsplit(INFO, ','))), by = .(chrom,POS, REF, ALT)]
+
+pseudo_deltas = pseudo_deltas[INFO != '.'] # figure out what's gone wrong with these ones
+pseudo_deltas = pseudo_deltas %>% separate(INFO, into = c(NA, 'gene', 'DS_AG', 'DS_AL', 'DS_DG', 'DS_DL', 'DP_AG', 'DP_AL', 'DP_DG', 'DP_DL'), sep = '\\|', convert = TRUE)
+setDT(pseudo_deltas)
+
+pseudo_deltas[, `:=` (start = POS, stop = POS)]
+
+
+pseudo_deltas = foverlaps(pseudo_deltas, SVPE_filt, type="within", by.y = c('chrom', 'start', 'stop'))
+pseudo_deltas[, `:=` (i.start = NULL, i.stop = NULL, SVPE_start = start + 10, SVPE_end = stop - 10)]
+pseudo_deltas[strand == '-', `:=` (DP_AG_gpos = POS + DP_AG + 1, DP_AL_gpos = POS + DP_AL + 1,
+                               DP_DG_gpos = POS + DP_DG - 1, DP_DL_gpos = POS + DP_DL - 1)]
+pseudo_deltas[strand == '+', `:=` (DP_AG_gpos = POS + DP_AG - 1, DP_AL_gpos = POS + DP_AL - 1,
+                               DP_DG_gpos = POS + DP_DG + 1, DP_DL_gpos = POS + DP_DL + 1)]
+```
+
+```{r}
+# check maximum AL & DL score for pseudos- this will tell us (probable) REF score for that splice-site - i.e. if it's already 1 can never have a AG delta
+PE_ref_acc_score = unique(pseudo_deltas[,.(border_match_intron, DP_AG_gpos = DP_AL_gpos, PE_ref_acc_score = DS_AL)]) %>% 
+  group_by(border_match_intron, DP_AG_gpos) %>% 
+  filter(PE_ref_acc_score == max(PE_ref_acc_score)) %>%
+  mutate(max_AG_score = 1-PE_ref_acc_score) %>% setDT()
+
+PE_ref_don_score = unique(pseudo_deltas[,.(border_match_intron, DP_DG_gpos = DP_DL_gpos, PE_ref_don_score = DS_DL)]) %>% 
+  group_by(border_match_intron, DP_DG_gpos) %>% 
+  filter(PE_ref_don_score == max(PE_ref_don_score)) %>%
+  mutate(max_DG_score = 1-PE_ref_don_score)%>% setDT()
+
+
+pseudo_deltas = PE_ref_acc_score[pseudo_deltas, on = .(border_match_intron, DP_AG_gpos)]
+pseudo_deltas[is.na(PE_ref_acc_score), `:=` (PE_ref_acc_score = 0, max_AG_score = 1)]
+
+pseudo_deltas = PE_ref_don_score[pseudo_deltas, on = .(border_match_intron, DP_DG_gpos)]
+pseudo_deltas[is.na(PE_ref_don_score), `:=` (PE_ref_don_score = 0, max_DG_score = 1)]
+```
+
+
+```{r}
+pseudo_deltas[, PE_length := abs(DP_AG_gpos - DP_DG_gpos)] 
+pseudo_deltas[, PE_frame := ifelse (PE_length %% 3 == 0, 'in-frame', 'out of frame')]
+
+pseudo_deltas[, DS_AG_prop := DS_AG/max_AG_score]
+pseudo_deltas[, DS_DG_prop := DS_DG/max_DG_score]
+pseudo_deltas$mean_gain_delta_prop <- rowMeans(pseudo_deltas[, .(DS_AG_prop, DS_DG_prop)])
+setorder(pseudo_deltas, border_match_intron, -mean_gain_delta_prop)
+
+```
+
+four categories of variant:
+- pseudo activating: increasing strength of SV pseudo
+- pseudo activating (trunc/ext): increasing strength of alt pseudo (trunc/ext of SV pseudo) [careful with variant_category_labels]
+- pseudo activating (alt): increasing strength of alt pseudo (two alternate ss) [careful with variant_category_labels]
+- pseudo deactivating: decreasing the strength of SV pseudo (difficult to interpret)
+
+```{r}
+pseudo_deltas[, `:=` (SVPE_Acc_gpos = ifelse(strand == '+', SVPE_start, SVPE_end),
+                      SVPE_Don_gpos = ifelse(strand == '+', SVPE_end, SVPE_start),
+                      max_gain = pmax(DS_AG, DS_DG),
+                      max_loss = pmax(DS_AL, DS_DL))]
+
+pseudo_deltas[SVPE_Acc_gpos == DP_AG_gpos & SVPE_Don_gpos == DP_DG_gpos, var_category := 'pseudo activating (SV)']
+pseudo_deltas[SVPE_Acc_gpos == DP_AG_gpos & SVPE_Don_gpos != DP_DG_gpos, var_category := 'pseudo activating (alt don)']
+pseudo_deltas[SVPE_Acc_gpos != DP_AG_gpos & SVPE_Don_gpos == DP_DG_gpos, var_category := 'pseudo activating (alt acc)']
+pseudo_deltas[SVPE_Acc_gpos != DP_AG_gpos & SVPE_Don_gpos != DP_DG_gpos, var_category := 'pseudo activating (alt)']
+
+pseudo_activating_variants = pseudo_deltas[mean_gain_delta_prop >= 0.1]
+pseudo_activating_variants = pseudo_activating_variants[, .(chrom, POS, REF, ALT, var_category, gene, strand, border_match_intron,
+                                                            DS_AG, DS_AL, DS_DG, DS_DL, DP_AG, DP_AL, DP_DG, DP_DL, 
+                                                            DP_DG_gpos, DP_AG_gpos, PE_length, PE_frame, DS_AG_prop, 
+                                                            DS_DG_prop, mean_gain_delta_prop, PE_ref_don_score, PE_ref_acc_score,
+                                                            SVPE_Acc_gpos, SVPE_Don_gpos)]
+
+setorder(pseudo_activating_variants, -mean_gain_delta_prop)
+fwrite(pseudo_activating_variants, 'data/pseudo_activating_variants.tsv.gz', sep = '\t')
+```
+
+
+```{r}
+pseudo_deltas[, .(chrom, POS, REF, ALT, var_category, gene, strand, border_match_intron,
+                                                            DS_AG, DS_AL, DS_DG, DS_DL, DP_AG, DP_AL, DP_DG, DP_DL, 
+                                                            DP_DG_gpos, DP_AG_gpos, PE_length, PE_frame, DS_AG_prop, 
+                                                            DS_DG_prop, mean_gain_delta_prop, PE_ref_don_score, PE_ref_acc_score,
+                                                            SVPE_Acc_gpos, SVPE_Don_gpos)]
+SVPE_filt
+pseudo_deltas_filt = pseudo_deltas[(DS_AG + DS_AL + DS_DG + DS_DG) > 0.1]
+pseudo_deltas_filt[border_match_intron == SVPE_filt$border_match_intron[7] , .(chrom, POS, REF, ALT, var_category, gene, strand, border_match_intron,
+                                                            DS_AG, DS_AL, DS_DG, DS_DL, DP_AG, DP_AL, DP_DG, DP_DL, 
+                                                            DP_DG_gpos, DP_AG_gpos, PE_length, PE_frame, DS_AG_prop, 
+                                                            DS_DG_prop, mean_gain_delta_prop, PE_ref_don_score, PE_ref_acc_score,
+                                                            SVPE_Acc_gpos, SVPE_Don_gpos)]
+```
+

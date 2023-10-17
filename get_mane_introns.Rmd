@@ -1,0 +1,45 @@
+---
+title: "R Notebook"
+output: 
+---
+
+```{r}
+library(data.table)
+library(GenomicRanges)
+library(GenomicFeatures)
+options(scipen=999)
+```
+
+```{r}
+if (!file.exists("utils/mane_txd.sqlite.gz")) {
+  mane_txdb <- makeTxDbFromGFF("https://ftp.ncbi.nlm.nih.gov/refseq/MANE/MANE_human/release_1.0/MANE.GRCh38.v1.0.ensembl_genomic.gff.gz")
+  saveDb(mane_txdb, "utils/mane_txdb.sqlite.gz")
+}
+
+# refseq hg19 tx info
+mane_txdb <- loadDb("utils/mane_txdb.sqlite.gz")
+
+mane_introns <- intronsByTranscript(mane_txdb, use.names = T)
+
+mane_introns_dt = as.data.table(mane_introns)
+mane_introns_dt[, intron_no := rowid(group)]
+mane_introns_dt[strand == '-', intron_no := -(intron_no - max(intron_no) - 1), by = .(group)]
+mane_introns_dt[, intron_id := paste(group_name, '_int_', intron_no, sep = '')]
+
+mane_introns = GRanges(mane_introns_dt)
+mane_introns_dt = as.data.table(mane_introns)
+mane_introns_dt[, start := start - 1]
+mane_introns_dt[, seqnames := gsub('chr', '', seqnames)]
+fwrite(mane_introns_dt, 'data/mane_introns.bed', col.names = FALSE, sep = '\t')
+```
+
+```{r}
+mane_exons = exonsBy(mane_txdb, by = 'gene')
+mane_exons = as.data.table(mane_exons)
+mane_exons = mane_exons[-which(duplicated(mane_exons[, .(seqnames, strand, start, end)]))]
+quantile(mane_exons$width, c(0.75, 0.89, 0.9, 0.95))
+```
+
+
+
+

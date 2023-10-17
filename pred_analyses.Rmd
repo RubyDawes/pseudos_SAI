@@ -1,0 +1,114 @@
+---
+title: "R Notebook"
+output: 
+---
+
+
+
+```{r}
+pseudo_activating_variants = pseudo_deltas[(strand == '+' & DP_AG_gpos == PE_start | strand == '-' & DP_AG_gpos == PE_end) & 
+                                             (strand == '+' & DP_DG_gpos == PE_end | strand == '-' & DP_DG_gpos == PE_start)  &
+                                             DS_AG > 0 & DS_DG > 0]
+pseudo_activating_variants = variant_category_labels[, .(border_match_intron, POS, var_category, donor_pos)][pseudo_activating_variants, on = .(border_match_intron, POS)]
+
+pseudo_activating_variants %>% group_by(var_category) %>% tally()
+
+# proportion of exonic bases that have pseudo-activating variant
+
+unique(pseudo_activating_variants[var_category == 'exonic' & DS_AG > 0.1 & DS_DG > 0.1, 
+                                  .(border_match_intron, PE_length, POS)])[, .(exonic_vars = .N, prop_exon = .N/PE_length), 
+                                                                                                     by = .(border_match_intron, PE_length)] %>% arrange(-prop_exon)
+
+
+pseudo_activating_variants[DS_AG_prop > 0.1 & DS_DG_prop <= 0.1]
+```
+
+```{r}
+pseudo_activating_variants[var_category == 'donor_ES']
+pseudo_activating_variants[DS_AG > 0.1 & DS_DG > 0.1]  %>%
+  ggplot(aes(y = DS_AG, x = var_category)) + geom_boxplot() 
+
+pseudo_activating_variants[DS_AG > 0.1 & DS_DG > 0.1]  %>%
+  ggplot(aes(y = DS_DG, x = var_category)) + geom_boxplot() 
+  coord_cartesian(ylim  = c(0, 1))
+
+# how many PPT variants are removing AG - none out of these 9, but look on whole set
+pseudo_activating_variants[var_category == 'PPT' & DS_AG > 0.1 & DS_DG > 0.1]
+
+# only 1 -3 is not a C already?
+pseudo_activating_variants[var_category == 'acceptor_ExSS' & DS_AG > 0.1 & DS_DG > 0.1]
+
+# donor variants- mostly -1
+pseudo_activating_variants[var_category == 'donor_ExSS'] %>% arrange(-DS_DG) %>% group_by(donor_pos) %>% tally()
+pseudo_activating_variants[var_category == 'donor_ExSS'] %>%
+  ggplot(aes(x = factor(donor_pos), y = DS_DG)) + geom_boxplot() 
+```
+```{r}
+# exonic variants
+pseudo_activating_variants[ DS_AG > 0.1 & DS_DG > 0.1 & var_category == 'exonic'] %>% 
+  ggplot(aes(x = (POS - start)/PE_length, y = DS_AG)) + geom_point(alpha = 0.01)
+```
+
+```{r}
+
+
+pseudo_activating_variants %>% group_by(border_match_intron) %>% tally() %>% arrange(-n)
+
+pseudo_activating_variants[border_match_intron == 'ENST00000317961.9_int_19'] %>% 
+  ggplot(aes(x = DP_AG, y = DS_AG / max_AG_score, fill = ALT)) + geom_bar(stat = 'identity', position = position_dodge())
+pseudo_activating_variants[border_match_intron == 'ENST00000317961.9_int_19'] %>% 
+  ggplot(aes(x = DP_DG, y = DS_DG / max_DG_score, fill = ALT)) + geom_bar(stat = 'identity', position = position_dodge())
+
+
+```
+
+
+
+
+```{r}
+pseudo_activating_variants[DS_AG > 0.5 & DS_DG > 0.5]
+
+pseudo_activating_variants[(POS >= PE_start - 1 & POS <= PE_start) | (POS >= PE_end & POS <= PE_end + 1), variant_category := 'ES']
+
+pseudo_activating_variants[(POS >= PE_start - 5 & POS <= PE_start + 5) | (POS >= PE_end - 5 & POS <= PE_end + 5)]
+```
+
+
+```{r}
+pseudo_activating_variants %>% ggplot(aes(x = DS_AG, y = DS_DG)) + geom_point() +
+  geom_smooth(method='lm', formula= y~x)
+```
+
+
+
+```{r}
+
+
+
+
+
+
+
+
+
+
+
+
+pseudo_deltas[DS_AG > 0.5]
+#
+# pseudo_deltas[, PE_start := start + 10]
+
+
+pseudo_activating_variants[border_match_intron == unique(pseudo_activating_variants$border_match_intron)[1]]
+
+
+
+
+
+#ENST00000323848.14_int_12 donor is already scores 0.99 - can only ever increase by 0.01
+pseudo_deltas[border_match_intron == 'ENST00000323848.14_int_12' & DP_DG_gpos == PE_end] %>% arrange(-DS_DG)
+
+#use spliceAI github v1.2.1 precomputed scores?
+```
+
+

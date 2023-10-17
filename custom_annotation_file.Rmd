@@ -1,0 +1,24 @@
+---
+title: "R Notebook"
+output: 
+---
+
+#NAME	CHROM	STRAND	TX_START	TX_END	EXON_START	EXON_END
+OR4F5	1	+	69090	70008	69090,	70008,
+OR4F16	1	-	685715	686654	685715,	686654,
+
+```{r}
+# refseq hg19 tx info
+mane_txdb <- loadDb("utils/mane_txdb.sqlite.gz")
+mane_annotations = as.data.table(transcripts(mane_txdb))
+
+mane_exons = exonsBy(mane_txdb, by = "tx", use.names = TRUE)
+mane_exons_dt = as.data.table(mane_exons)
+mane_exons_dt = mane_exons_dt[, .(EXON_START = paste(start, collapse = ','), 
+                  EXON_END = paste(end, collapse = ',')), by = .(`#NAME` = group_name)]
+mane_exons_dt[, `:=` (EXON_END = paste0(EXON_END, ','), EXON_START = paste0(EXON_START, ','))]
+mane_annotations = mane_annotations[, .(`#NAME` = tx_name, CHROM = gsub('chr', '', seqnames), STRAND = strand, TX_START = start, TX_END = end)]
+mane_annotations = mane_annotations[mane_exons_dt, on = .(`#NAME`)]
+fwrite(mane_annotations, 'utils/grch38_mane.txt', sep = '\t')
+```
+
